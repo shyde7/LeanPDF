@@ -149,11 +149,13 @@ class MainWindow(QMainWindow):
         self.canvas.overlay_created.connect(self.on_overlay_created)
         self.canvas.overlay_selected.connect(self.on_overlay_selected)
         self.canvas.overlay_text_changed.connect(self.on_overlay_text_changed)
+        self.canvas.overlay_delete_requested.connect(self.on_overlay_deleted_in_panel)
         self.canvas.pre_highlight_create.connect(self._push_undo)
         self.canvas.highlight_created.connect(self.on_highlight_created)
         self.canvas.highlight_selected.connect(self.on_highlight_selected)
         self.canvas.highlight_delete_requested.connect(self.on_highlight_delete_requested)
         self.canvas.zoom_requested.connect(self._step_zoom)
+        self.canvas.tool_requested.connect(self._on_tool_requested)
         self.props.overlay_changed.connect(self.on_overlay_changed_in_panel)
         self.props.overlay_deleted.connect(self.on_overlay_deleted_in_panel)
         self.props.highlight_color_changed.connect(self.on_highlight_color_changed)
@@ -229,6 +231,12 @@ class MainWindow(QMainWindow):
         else:
             self.state.active_tool = "select"
             self.canvas.setCursor(Qt.ArrowCursor)
+
+    def _on_tool_requested(self, tool: str) -> None:
+        if tool == "add_text":
+            self.act_add_text.setChecked(True)
+        elif tool == "highlight":
+            self.act_highlight.setChecked(True)
 
     def action_delete_page(self) -> None:
         if not self.doc.is_open:

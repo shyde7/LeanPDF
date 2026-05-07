@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
     QGraphicsScene,
     QGraphicsTextItem,
     QGraphicsView,
+    QMenu,
 )
 
 from ..core.coordinate_mapper import CoordinateMapper
@@ -273,13 +274,15 @@ class PDFCanvas(QGraphicsView):
     overlay_text_changed = Signal(str)
     pre_overlay_create = Signal()
     overlay_created = Signal(str)
+    overlay_delete_requested = Signal(str)
     # highlight signals
     pre_highlight_create = Signal()
     highlight_created = Signal(str)
     highlight_selected = Signal(str)
     highlight_delete_requested = Signal(str)
-    # zoom
+    # zoom / tool
     zoom_requested = Signal(int)        # +1 = in, -1 = out
+    tool_requested = Signal(str)        # "add_text" | "highlight"
     page_clicked_empty = Signal()
 
     def __init__(self, doc: PDFDocument, state: AppState, parent=None) -> None:
@@ -520,6 +523,50 @@ class PDFCanvas(QGraphicsView):
         self._scene.clearSelection()
         item.setSelected(True)
         self.highlight_created.emit(hl.id)
+
+    # ---- context menu -----------------------------------------------------
+
+    def contextMenuEvent(self, event) -> None:
+        if self.mapper is None:
+            return
+        scene_pos = self.mapToScene(event.pos())
+
+        clicked_overlay: Optional[_OverlayItem] = None
+        clicked_highlight: Optional[_HighlightItem] = None
+        for gitem in self._scene.items(scene_pos):
+            if isinstance(gitem, _OverlayItem) and clicked_overlay is None:
+                clicked_overlay = gitem
+            elif isinstance(gitem, _HighlightItem) and clicked_highlight is None:
+                clicked_highlight = gitem
+
+        menu = QMenu(self)
+
+        if clicked_overlay is not None:
+            menu.addAction("Delete Text", lambda: self.overlay_delete_requested.emit(clicked_overlay.overlay.id))
+        elif clicked_highlight is not None:
+            menu.addAction("Delete Highlight", lambda: self.highlight_delete_requested.emit(clicked_highlight.hl.id))
+        elif self._on_page(scene_pos):
+            menu.addAction("Add Text", lambda: self._place_text_overlay(scene_pos))
+            menu.addAction("Highlight", lambda: self.tool_requested.emit("highlight"))
+        else:
+            return
+
+        menu.exec(event.globalPos())
+
+    def _place_text_overlay(self, scene_pos: QPointF) -> None:
+        if self.mapper is None:
+            return
+        px, py = self.mapper.screen_to_pdf(scene_pos.x(), scene_pos.y())
+        px, py = self.mapper.clamp_pdf(px, py)
+        self.pre_overlay_create.emit()
+        overlay = TextOverlay(page_index=self.state.selected_page_index, x_pdf=px, y_pdf=py)
+        self.state.overlays.append(overlay)
+        self.state.selected_overlay_id = overlay.id
+        self.state.dirty = True
+        item = self._add_overlay_item(overlay)
+        item.setSelected(True)
+        item._text.setFocus()
+        self.overlay_created.emit(overlay.id)
 
     # ---- internals --------------------------------------------------------
 
