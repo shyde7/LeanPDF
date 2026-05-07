@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from ..models.app_state import AppState
 
 MAX_HISTORY = 30
+MAX_UNDO_BYTES = 256 * 1024 * 1024  # 256 MB total across all snapshots
 
 
 @dataclass
@@ -42,6 +43,11 @@ class UndoStack:
         """Capture current state; call this BEFORE a mutating operation."""
         self._undo.append(self._capture(doc, state))
         if len(self._undo) > MAX_HISTORY:
+            self._undo.pop(0)
+        # Drop oldest entries if the snapshots are consuming too much memory.
+        while len(self._undo) > 1:
+            if sum(len(s.doc_bytes) for s in self._undo) <= MAX_UNDO_BYTES:
+                break
             self._undo.pop(0)
         self._redo.clear()
 

@@ -183,8 +183,14 @@ class MainWindow(QMainWindow):
         self.state.zoom = 1.0
         self.state.overlays.clear()
         self.state.selected_overlay_id = None
+        self.state.highlights.clear()
+        self.state.selected_highlight_id = None
         self.state.dirty = False
         self.undo_stack.clear()
+        # Reset tool mode — unchecking a checked button fires the toggle handler
+        # which resets state.active_tool and the cursor.
+        self.act_add_text.setChecked(False)
+        self.act_highlight.setChecked(False)
         self._post_doc_change()
 
     def action_save(self) -> None:
@@ -244,10 +250,10 @@ class MainWindow(QMainWindow):
             return
         if not skip_confirm:
             if len(indices) == 1:
-                msg = f"Delete page {indices[0] + 1}? This cannot be undone."
+                msg = f"Delete page {indices[0] + 1}?"
             else:
                 labels = ", ".join(str(i + 1) for i in indices)
-                msg = f"Delete pages {labels}? This cannot be undone."
+                msg = f"Delete pages {labels}?"
             if not confirm(self, "Delete Page", msg):
                 return
         self._push_undo()
@@ -273,9 +279,11 @@ class MainWindow(QMainWindow):
             operations.merge_pdfs(self.doc, self.state, paths)
         except EncryptedPDFError as exc:
             error(self, "Merge PDFs", str(exc))
+            self._post_doc_change()  # reflect any pages inserted before the failure
             return
         except PDFDocumentError as exc:
             error(self, "Merge PDFs", str(exc))
+            self._post_doc_change()
             return
         self._post_doc_change()
 
@@ -334,13 +342,8 @@ class MainWindow(QMainWindow):
             # Rebuild to restore visual order to match doc state.
             self._post_doc_change()
             return
-        # Sidebar already reflects the new visual order (Qt moved the item).
-        # Update thumbnail labels and re-render canvas without a full rebuild.
-        for i in range(self.sidebar.count()):
-            item = self.sidebar.item(i)
-            if item:
-                item.setText(f"Page {i + 1}")
-        self.sidebar.select_page(self.state.selected_page_index)
+        # Rebuild the sidebar so thumbnail images match the new page order.
+        self.sidebar.rebuild(self.doc, self.state.selected_page_index)
         self.canvas.render_current_page()
         self._refresh_actions()
         self._refresh_status()
@@ -374,6 +377,7 @@ class MainWindow(QMainWindow):
     def on_highlight_created(self, highlight_id: str) -> None:
         hl = self.state.find_highlight(highlight_id)
         self.props.show_highlight(hl)
+        self.act_highlight.setChecked(False)  # revert to select mode after placement
         self._refresh_undo_actions()
         self._update_title()
 
@@ -424,6 +428,7 @@ class MainWindow(QMainWindow):
         self.act_add_text.setEnabled(is_open)
         self.act_highlight.setEnabled(is_open)
         self.act_delete.setEnabled(is_open and self.doc.page_count() > 1)
+        self.act_merge.setEnabled(True)  # always enabled: works with or without an open doc
         self.act_zoom_in.setEnabled(is_open)
         self.act_zoom_out.setEnabled(is_open)
         self._refresh_undo_actions()

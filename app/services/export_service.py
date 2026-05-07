@@ -16,13 +16,21 @@ def export_pdf(doc: PDFDocument, state: AppState, path: str) -> None:
     if not is_writable_target(path):
         raise ExportError(f"Cannot write to: {path}")
 
-    if state.overlays:
-        doc.apply_text_overlays(state.overlays)
+    has_overlays = bool(state.overlays or state.highlights)
+    snapshot = doc.snapshot_bytes() if has_overlays else None
+    path_before = doc.path
 
-    if state.highlights:
-        doc.apply_highlights(state.highlights)
-
-    doc.save_as(path)
+    try:
+        if state.overlays:
+            doc.apply_text_overlays(state.overlays)
+        if state.highlights:
+            doc.apply_highlights(state.highlights)
+        doc.save_as(path)
+    except Exception:
+        # Roll the in-memory document back so overlays aren't applied twice on retry.
+        if snapshot is not None:
+            doc.restore_from_bytes(snapshot, path_before)
+        raise
 
     state.overlays.clear()
     state.selected_overlay_id = None

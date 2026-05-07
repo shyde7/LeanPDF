@@ -191,15 +191,21 @@ class PDFDocument:
         self._require_open()
         if not paths:
             raise PDFDocumentError("No PDFs to merge")
+        any_inserted = False
         for p in paths:
             try:
                 with pymupdf.open(p) as src:
                     if src.needs_pass:
+                        if any_inserted:
+                            self._bump_version()
                         raise EncryptedPDFError(f"Encrypted PDF cannot be merged: {p}")
                     self._doc.insert_pdf(src)
+                    any_inserted = True
             except EncryptedPDFError:
                 raise
             except Exception as exc:
+                if any_inserted:
+                    self._bump_version()
                 raise PDFDocumentError(f"Failed to merge {p}: {exc}") from exc
         self._bump_version()
 
