@@ -1,10 +1,10 @@
 # LeanPDF
 
-> A love letter to simplicity. A middle finger to Adobe.
+> PDFs are simple. The tools aren't.
 
 ---
 
-Adobe Acrobat costs $240 a year. It takes 30 seconds to launch. It phones home. It nags you to sign in. It bundles features nobody asked for and hides the ones you actually need behind paywalls, tooltips, and modal dialogs. Foxit, PDF-XChange, Nitro — same story, different coat of paint.
+Adobe Acrobat costs $240 a year. It takes 30 seconds to launch. It phones home. It nags you to sign in. It bundles features nobody asked for and hides the ones you actually need behind paywalls, tooltips, and modal dialogs.
 
 All you wanted to do was add some text to a page. Delete a page. Merge two files. That's it.
 
