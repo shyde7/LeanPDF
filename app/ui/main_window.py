@@ -14,7 +14,9 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QStatusBar,
+    QTabBar,
     QToolBar,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -33,6 +35,14 @@ from .thumbnail_sidebar import ThumbnailSidebar
 ZOOM_STEPS = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0]
 
 
+class _Tab:
+    """Holds all per-tab state: document, app state, and undo history."""
+    def __init__(self) -> None:
+        self.doc = PDFDocument()
+        self.state = AppState()
+        self.undo_stack = UndoStack()
+
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -41,9 +51,8 @@ class MainWindow(QMainWindow):
         if os.path.exists(_ICON_PATH):
             self.setWindowIcon(QIcon(_ICON_PATH))
 
-        self.doc = PDFDocument()
-        self.state = AppState()
-        self.undo_stack = UndoStack()
+        self._tabs: List[_Tab] = [_Tab()]
+        self._active_idx: int = 0
 
         self._build_central()
         self._build_toolbar()
@@ -52,11 +61,37 @@ class MainWindow(QMainWindow):
         self._refresh_actions()
         self._update_title()
 
+    # ---- active-tab shortcuts --------------------------------------------
+
+    @property
+    def doc(self) -> PDFDocument:
+        return self._tabs[self._active_idx].doc
+
+    @property
+    def state(self) -> AppState:
+        return self._tabs[self._active_idx].state
+
+    @property
+    def undo_stack(self) -> UndoStack:
+        return self._tabs[self._active_idx].undo_stack
+
     # ---- layout -------------------------------------------------------
 
     def _build_central(self) -> None:
         central = QWidget(self)
-        layout = QHBoxLayout(central)
+        outer = QVBoxLayout(central)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        self.tab_bar = QTabBar(self)
+        self.tab_bar.setTabsClosable(True)
+        self.tab_bar.setMovable(False)
+        self.tab_bar.setExpanding(False)
+        self.tab_bar.addTab("Untitled")
+        outer.addWidget(self.tab_bar)
+
+        content = QWidget()
+        layout = QHBoxLayout(content)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
@@ -68,6 +103,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.canvas, 1)
         layout.addWidget(self.props)
 
+        outer.addWidget(content, 1)
         self.setCentralWidget(central)
 
     def _build_toolbar(self) -> None:
@@ -140,7 +176,69 @@ class MainWindow(QMainWindow):
         self.page_label = QLabel("")
         sb.addPermanentWidget(self.page_label)
 
+    # ---- tab management --------------------------------------------------
+
+    def _new_tab(self) -> None:
+        """Create a blank tab and make it active. Does NOT call _post_doc_change;
+        the caller is expected to load content and call it when ready."""
+        self._tabs.append(_Tab())
+        self._active_idx = len(self._tabs) - 1
+        self.tab_bar.blockSignals(True)
+        self.tab_bar.addTab("Untitled")
+        self.tab_bar.setCurrentIndex(self._active_idx)
+        self.tab_bar.blockSignals(False)
+        self.canvas.set_document(self.doc, self.state)
+        self.props.set_state(self.state)
+
+    def _switch_to_tab(self, idx: int) -> None:
+        self._active_idx = idx
+        self.canvas.set_document(self.doc, self.state)
+        self.props.set_state(self.state)
+        self.tab_bar.blockSignals(True)
+        self.tab_bar.setCurrentIndex(idx)
+        self.tab_bar.blockSignals(False)
+        self._post_doc_change()
+
+    def _close_tab(self, idx: int) -> None:
+        tab = self._tabs[idx]
+        if tab.state.dirty:
+            prev_idx = self._active_idx
+            if idx != prev_idx:
+                self._switch_to_tab(idx)
+            if not self._confirm_discard_if_dirty():
+                if idx != prev_idx:
+                    self._switch_to_tab(prev_idx)
+                return
+
+        tab.doc.close()
+
+        if len(self._tabs) == 1:
+            # Reset to a fresh empty tab rather than removing the last one.
+            self._tabs[0] = _Tab()
+            self._active_idx = 0
+            self.canvas.set_document(self.doc, self.state)
+            self.props.set_state(self.state)
+            self.tab_bar.setTabText(0, "Untitled")
+            self._post_doc_change()
+            return
+
+        self._tabs.pop(idx)
+        self.tab_bar.blockSignals(True)
+        self.tab_bar.removeTab(idx)
+        self.tab_bar.blockSignals(False)
+        self._switch_to_tab(min(idx, len(self._tabs) - 1))
+
+    def _on_tab_changed(self, idx: int) -> None:
+        if idx < 0 or idx == self._active_idx:
+            return
+        self._active_idx = idx
+        self.canvas.set_document(self.doc, self.state)
+        self.props.set_state(self.state)
+        self._post_doc_change()
+
     def _connect_signals(self) -> None:
+        self.tab_bar.currentChanged.connect(self._on_tab_changed)
+        self.tab_bar.tabCloseRequested.connect(self._close_tab)
         self.sidebar.page_selected.connect(self.on_page_selected)
         self.sidebar.delete_requested.connect(self.action_delete_pages)
         self.sidebar.delete_requested_silent.connect(lambda idx: self.action_delete_pages(idx, skip_confirm=True))
@@ -164,13 +262,17 @@ class MainWindow(QMainWindow):
     # ---- top-level actions -------------------------------------------
 
     def action_open(self) -> None:
-        if not self._confirm_discard_if_dirty():
-            return
         path, _ = QFileDialog.getOpenFileName(self, "Open PDF", "", "PDF Files (*.pdf)")
         if not path:
             return
         if not looks_like_pdf(path):
             error(self, "Open PDF", "That file does not look like a PDF.")
+            return
+        # If the active tab already has a document open, load into a fresh tab.
+        # Otherwise reuse the current empty tab (checking for unsaved work first).
+        if self.doc.is_open:
+            self._new_tab()
+        elif not self._confirm_discard_if_dirty():
             return
         try:
             self.doc.open(path)
@@ -189,8 +291,6 @@ class MainWindow(QMainWindow):
         self.state.selected_highlight_id = None
         self.state.dirty = False
         self.undo_stack.clear()
-        # Reset tool mode — unchecking a checked button fires the toggle handler
-        # which resets state.active_tool and the cursor.
         self.act_add_text.setChecked(False)
         self.act_highlight.setChecked(False)
         self._post_doc_change()
@@ -451,9 +551,11 @@ class MainWindow(QMainWindow):
         )
 
     def _update_title(self) -> None:
-        name = self.state.current_file_path or "Untitled"
-        dirty = "*" if self.state.dirty else ""
-        self.setWindowTitle(f"LeanPDF — {name}{dirty}")
+        path = self.state.current_file_path
+        name = os.path.basename(path) if path else "Untitled"
+        dirty_marker = "*" if self.state.dirty else ""
+        self.tab_bar.setTabText(self._active_idx, f"{name}{dirty_marker}")
+        self.setWindowTitle(f"LeanPDF — {path or 'Untitled'}{dirty_marker}")
 
     # ---- save flow ----------------------------------------------------
 
@@ -483,8 +585,12 @@ class MainWindow(QMainWindow):
     # ---- close --------------------------------------------------------
 
     def closeEvent(self, event) -> None:
-        if not self._confirm_discard_if_dirty():
-            event.ignore()
-            return
-        self.doc.close()
+        for idx in range(len(self._tabs)):
+            if self._tabs[idx].state.dirty:
+                self._switch_to_tab(idx)
+                if not self._confirm_discard_if_dirty():
+                    event.ignore()
+                    return
+        for tab in self._tabs:
+            tab.doc.close()
         event.accept()

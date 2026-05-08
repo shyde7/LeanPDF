@@ -306,6 +306,11 @@ class PDFCanvas(QGraphicsView):
 
     # ---- public API -------------------------------------------------------
 
+    def set_document(self, doc: PDFDocument, state: AppState) -> None:
+        self.doc = doc
+        self.state = state
+        self.show_empty()
+
     def show_empty(self) -> None:
         self._scene.clear()
         self._page_item = None

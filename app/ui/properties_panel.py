@@ -157,6 +157,10 @@ class PropertiesPanel(QWidget):
         self.empty_label.hide()
         self.highlight_widget.show()
 
+    def set_state(self, state: AppState) -> None:
+        self.state = state
+        self.show_overlay(None)
+
     def clear(self) -> None:
         self.show_overlay(None)
 
